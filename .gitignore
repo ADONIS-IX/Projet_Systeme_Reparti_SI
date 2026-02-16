@@ -40,3 +40,13 @@ Thumbs.db
 
 # Kubernetes secrets
 *-secret.yaml
+
+# Gunicorn
+*.ctl
+gunicorn.ctl
+
+# Fichiers générés/gérés par Docker & Django
+backend/staticfiles/
+backend/media/
+staticfiles/
+media/

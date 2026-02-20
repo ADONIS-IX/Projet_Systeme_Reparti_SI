@@ -1,0 +1,5 @@
+# Forcer les scripts shell à rester en LF (format Linux)
+*.sh text eol=lf
+
+# Laisser Git gérer les autres fichiers texte normalement
+* text=auto

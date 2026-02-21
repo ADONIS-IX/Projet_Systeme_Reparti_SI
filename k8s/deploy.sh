@@ -1,5 +1,8 @@
 #!/bin/bash
 
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+cd "$SCRIPT_DIR/.." || exit 1
+
 echo "Déploiement Kubernetes"
 echo "========================="
 
@@ -25,10 +28,14 @@ echo -e "${GREEN}✓ Docker configuré${NC}"
 
 # Construire les images
 echo -e "${YELLOW}Construction des images Docker...${NC}"
-cd ..
+if [ -d "./backend" ] && [ -d "./frontend" ]; then
 docker build -t backend:latest ./backend
 docker build -t frontend:latest ./frontend
 echo -e "${GREEN}✓ Images construites${NC}"
+else
+    echo "Erreur : Les dossiers ./backend ou ./frontend sont introuvables."
+    exit 1
+fi
 
 # Créer les secrets
 echo -e "${YELLOW}Création des secrets...${NC}"

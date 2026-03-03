@@ -1,0 +1,35 @@
+---
+- name: Configuration complète de l'infrastructure
+  hosts: local
+  become: yes
+  vars_prompt:
+    - name: db_password
+      prompt: "Mot de passe PostgreSQL"
+      private: yes
+    - name: django_secret_key
+      prompt: "Django SECRET_KEY"
+      private: yes
+  
+  roles:
+    - docker
+    - kubernetes
+    - jenkins
+    - deploy
+
+  post_tasks:
+    - name: Afficher le résumé de l'installation
+      debug:
+        msg:
+          - "=========================="
+          - "Installation terminée !"
+          - "=========================="
+          - "Docker: Installé"
+          - "Kubernetes: Installé"
+          - "Jenkins: Installé sur http://localhost:8080"
+          - "Application: Déployée sur Kubernetes"
+          - ""
+          - "Commandes utiles:"
+          - "- kubectl get pods"
+          - "- kubectl get services"
+          - "- minikube service frontend --url"
+          - "- minikube service backend --url"

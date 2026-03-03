@@ -1,0 +1,50 @@
+---
+# Installation de Jenkins
+
+- name: Ajouter la clé Jenkins
+  apt_key:
+    url: https://pkg.jenkins.io/debian-stable/jenkins.io-2023.key
+    state: present
+  when: ansible_os_family == "Debian"
+
+- name: Ajouter le dépôt Jenkins
+  apt_repository:
+    repo: "deb https://pkg.jenkins.io/debian-stable binary/"
+    state: present
+  when: ansible_os_family == "Debian"
+
+- name: Installer Java (requis pour Jenkins)
+  apt:
+    name: openjdk-11-jdk
+    state: present
+  when: ansible_os_family == "Debian"
+
+- name: Installer Jenkins
+  apt:
+    name: jenkins
+    state: present
+    update_cache: yes
+  when: ansible_os_family == "Debian"
+
+- name: Démarrer et activer Jenkins
+  service:
+    name: jenkins
+    state: started
+    enabled: yes
+
+- name: Attendre que Jenkins démarre
+  wait_for:
+    port: 8080
+    delay: 10
+    timeout: 60
+
+- name: Récupérer le mot de passe initial Jenkins
+  command: cat /var/lib/jenkins/secrets/initialAdminPassword
+  register: jenkins_password
+  changed_when: false
+  ignore_errors: yes
+
+- name: Afficher le mot de passe initial Jenkins
+  debug:
+    msg: "Mot de passe initial Jenkins: {{ jenkins_password.stdout }}"
+  when: jenkins_password.stdout is defined

@@ -1,0 +1,46 @@
+---
+# Installation de Kubernetes (kubectl et minikube)
+
+- name: Télécharger kubectl
+  get_url:
+    url: "https://dl.k8s.io/release/{{ kubectl_version | default('v1.38.0') }}/bin/linux/amd64/kubectl"
+    dest: /tmp/kubectl
+    mode: '0755'
+
+- name: Installer kubectl
+  copy:
+    src: /tmp/kubectl
+    dest: /usr/local/bin/kubectl
+    mode: '0755'
+    remote_src: yes
+
+- name: Télécharger Minikube
+  get_url:
+    url: https://storage.googleapis.com/minikube/releases/latest/minikube-linux-amd64
+    dest: /tmp/minikube
+    mode: '0755'
+
+- name: Installer Minikube
+  copy:
+    src: /tmp/minikube
+    dest: /usr/local/bin/minikube
+    mode: '0755'
+    remote_src: yes
+
+- name: Vérifier l'installation de kubectl
+  command: kubectl version --client
+  register: kubectl_version_output
+  changed_when: false
+
+- name: Afficher la version de kubectl
+  debug:
+    msg: "{{ kubectl_version_output.stdout }}"
+
+- name: Vérifier l'installation de Minikube
+  command: minikube version
+  register: minikube_version_output
+  changed_when: false
+
+- name: Afficher la version de Minikube
+  debug:
+    msg: "{{ minikube_version_output.stdout }}"

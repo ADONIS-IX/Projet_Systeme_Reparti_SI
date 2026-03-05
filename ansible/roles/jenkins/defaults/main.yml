@@ -1,0 +1,15 @@
+---
+# Versions et configuration Jenkins
+java_version: "21"
+jenkins_version: "latest"
+jenkins_port: 8080
+jenkins_host: "localhost"
+
+# URLs des dépôts
+jenkins_key_url: "https://pkg.jenkins.io/debian-stable/jenkins.io.key"
+jenkins_repo: "deb https://pkg.jenkins.io/debian-stable binary/"
+
+# Configuration de Jenkins
+jenkins_admin_username: "admin"
+jenkins_executor_count: 2
+jenkins_jvm_options: "-Xmx1024m -Xms512m"

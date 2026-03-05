@@ -1,53 +1,172 @@
 ---
-# Installation de Docker
+# Installation et configuration de Docker
 
-- name: Mettre à jour le cache apt
-  apt:
-    update_cache: yes
-  when: ansible_os_family == "Debian"
+- name: Installer les dépendances et Docker (Debian/Ubuntu)
+  block:
+    # =================== DÉPENDANCES ===================
+    - name: Mettre à jour le cache apt
+      apt:
+        update_cache: yes
+        cache_valid_time: 3600
 
-- name: Installer les dépendances
-  apt:
-    name:
-      - apt-transport-https
-      - ca-certificates
-      - curl
-      - gnupg
-      - lsb-release
-    state: present
-  when: ansible_os_family == "Debian"
+    - name: Installer les dépendances
+      apt:
+        name:
+          - apt-transport-https
+          - ca-certificates
+          - curl
+          - gnupg
+          - lsb-release
+          - software-properties-common
+        state: present
 
-- name: Ajouter la clé GPG Docker
-  apt_key:
-    url: https://download.docker.com/linux/ubuntu/gpg
-    state: present
-  when: ansible_os_family == "Debian"
+    # =================== DÉPÔT DOCKER ===================
+    - name: Ajouter la clé GPG Docker
+      apt_key:
+        url: "https://download.docker.com/linux/{{ docker_distribution }}/gpg"
+        state: present
+      register: docker_key_added
+      retries: 3
+      delay: 5
 
-- name: Ajouter le dépôt Docker
-  apt_repository:
-    repo: "deb [arch=amd64] https://download.docker.com/linux/ubuntu {{ ansible_distribution_release }} stable"
-    state: present
-  when: ansible_os_family == "Debian"
+    - name: Ajouter le dépôt Docker
+      apt_repository:
+        repo: "deb [arch={{ docker_architecture }}] https://download.docker.com/linux/{{ docker_distribution }} {{ ansible_distribution_release }} stable"
+        state: present
+        filename: docker-ce
 
-- name: Installer Docker
-  apt:
-    name:
-      - docker-ce
-      - docker-ce-cli
-      - containerd.io
-      - docker-compose-plugin
-    state: present
+    # =================== INSTALLATION DOCKER ===================
+    - name: Installer Docker et containerd
+      apt:
+        name:
+          - "docker-ce{% if docker_version != 'latest' %}={{ docker_version }}*{% endif %}"
+          - "docker-ce-cli{% if docker_version != 'latest' %}={{ docker_version }}*{% endif %}"
+          - containerd.io
+          - docker-compose-plugin
+        state: present
+      register: docker_installed
+
   when: ansible_os_family == "Debian"
+  tags:
+    - docker
+    - install
+
+- name: Installer Docker (RedHat/CentOS)
+  block:
+    # =================== DÉPENDANCES ===================
+    - name: Installer les dépendances (RedHat)
+      yum:
+        name:
+          - yum-utils
+          - device-mapper-persistent-data
+          - lvm2
+        state: present
+
+    # =================== DÉPÔT DOCKER ===================
+    - name: Ajouter le dépôt Docker (RedHat)
+      command: yum-config-manager --add-repo https://download.docker.com/linux/centos/docker-ce.repo
+      args:
+        creates: /etc/yum.repos.d/docker-ce.repo
+
+    # =================== INSTALLATION DOCKER ===================
+    - name: Installer Docker et containerd (RedHat)
+      yum:
+        name:
+          - "docker-ce{% if docker_version != 'latest' %}-{{ docker_version }}{% endif %}"
+          - "docker-ce-cli{% if docker_version != 'latest' %}-{{ docker_version }}{% endif %}"
+          - containerd.io
+          - docker-compose-plugin
+        state: present
+      register: docker_installed
+
+  when: ansible_os_family == "RedHat"
+  tags:
+    - docker
+    - install
+
+# =================== CONFIGURATION SERVICE ===================
+
+- name: Créer le répertoire de configuration Docker
+  file:
+    path: /etc/docker
+    state: directory
+    mode: '0755'
+
+- name: Configurer Docker daemon
+  copy:
+    content: "{{ docker_daemon_config | to_nice_json }}"
+    dest: /etc/docker/daemon.json
+    mode: '0644'
+  notify: Redémarrer Docker
+  when: docker_daemon_config is defined
+
+- name: Recharger systemd
+  systemd:
+    daemon_reload: yes
 
 - name: Démarrer et activer Docker
   service:
     name: docker
     state: started
     enabled: yes
+  register: docker_service
+
+- name: Attendre que Docker soit prêt
+  wait_for:
+    timeout: 30
+  when: docker_service is changed
+
+# =================== VÉRIFICATION ===================
+
+- name: Vérifier l'installation de Docker
+  command: docker --version
+  register: docker_version_output
+  changed_when: false
+  failed_when: docker_version_output.rc != 0
+
+- name: Afficher la version de Docker
+  debug:
+    msg: "✅ Docker installé : {{ docker_version_output.stdout }}"
+
+# =================== GESTION UTILISATEUR ===================
+
+- name: Déterminer l'architecture Docker
+  set_fact:
+    docker_distribution: "{{ 'debian' if ansible_distribution == 'Debian' else 'ubuntu' if ansible_distribution == 'Ubuntu' else 'centos' }}"
+    docker_architecture: "{{ 'arm64' if ansible_machine == 'aarch64' else 'amd64' }}"
+
+- name: Vérifier l'appartenance au groupe docker
+  command: "groups {{ ansible_user }}"
+  register: user_groups
+  changed_when: false
+  when: ansible_user is defined and enable_docker_user_group | default(false)
 
 - name: Ajouter l'utilisateur au groupe docker
   user:
     name: "{{ ansible_user }}"
     groups: docker
     append: yes
-  when: ansible_user is defined
+  when:
+    - ansible_user is defined
+    - enable_docker_user_group | default(false)
+    - "'docker' not in user_groups.stdout"
+  register: docker_group_added
+
+- name: Afficher avertissement de sécurité
+  debug:
+    msg: |
+      ⚠️  AVERTISSEMENT DE SÉCURITÉ
+      L'utilisateur {{ ansible_user }} a été ajouté au groupe docker.
+      Cela lui donne des droits équivalents à root.
+      À utiliser avec prudence en environnement de production !
+  when: docker_group_added is changed
+
+- name: Résumé de l'installation
+  debug:
+    msg: |
+      ✅ Installation Docker complète !
+      📦 Version: {{ docker_version_output.stdout }}
+      🏗️  Architecture: {{ docker_architecture }}
+      📍 Distribution: {{ docker_distribution }}
+  tags:
+    - always

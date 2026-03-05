@@ -1,46 +1,100 @@
 ---
 # Installation de Kubernetes (kubectl et minikube)
 
-- name: Télécharger kubectl
-  get_url:
-    url: "https://dl.k8s.io/release/{{ kubectl_version | default('v1.38.0') }}/bin/linux/amd64/kubectl"
-    dest: /tmp/kubectl
+- name: Définir les versions par défaut
+  set_fact:
+    kubectl_version: "{{ kubectl_version | default('v1.28.0') }}"
+    minikube_version: "{{ minikube_version | default('1.32.0') }}"
+
+- name: Créer le répertoire temporaire pour les téléchargements
+  file:
+    path: /tmp/k8s-downloads
+    state: directory
     mode: '0755'
+
+# =================== KUBECTL ===================
+
+- name: Vérifier si kubectl est déjà installé
+  stat:
+    path: /usr/local/bin/kubectl
+  register: kubectl_installed
 
 - name: Installer kubectl
-  copy:
-    src: /tmp/kubectl
-    dest: /usr/local/bin/kubectl
-    mode: '0755'
-    remote_src: yes
+  block:
+    - name: Télécharger kubectl
+      get_url:
+        url: "https://dl.k8s.io/release/{{ kubectl_version }}/bin/linux/amd64/kubectl"
+        dest: /tmp/k8s-downloads/kubectl
+        mode: '0755'
+        checksum: "sha256:https://dl.k8s.io/release/{{ kubectl_version }}/bin/linux/amd64/kubectl.sha256"
+      register: kubectl_download
+      retries: 3
+      delay: 5
 
-- name: Télécharger Minikube
-  get_url:
-    url: https://storage.googleapis.com/minikube/releases/latest/minikube-linux-amd64
-    dest: /tmp/minikube
-    mode: '0755'
+    - name: Copier kubectl dans /usr/local/bin
+      copy:
+        src: /tmp/k8s-downloads/kubectl
+        dest: /usr/local/bin/kubectl
+        mode: '0755'
+        remote_src: yes
+      when: kubectl_download is changed
+
+  when: not kubectl_installed.stat.exists or force_reinstall | default(false)
+
+# =================== MINIKUBE ===================
+
+- name: Vérifier si Minikube est déjà installé
+  stat:
+    path: /usr/local/bin/minikube
+  register: minikube_installed
 
 - name: Installer Minikube
-  copy:
-    src: /tmp/minikube
-    dest: /usr/local/bin/minikube
-    mode: '0755'
-    remote_src: yes
+  block:
+    - name: Télécharger Minikube
+      get_url:
+        url: "https://github.com/kubernetes/minikube/releases/download/v{{ minikube_version }}/minikube-linux-amd64"
+        dest: /tmp/k8s-downloads/minikube
+        mode: '0755'
+      register: minikube_download
+      retries: 3
+      delay: 5
+
+    - name: Copier Minikube dans /usr/local/bin
+      copy:
+        src: /tmp/k8s-downloads/minikube
+        dest: /usr/local/bin/minikube
+        mode: '0755'
+        remote_src: yes
+      when: minikube_download is changed
+
+  when: not minikube_installed.stat.exists or force_reinstall | default(false)
+
+# =================== VÉRIFICATIONS ===================
 
 - name: Vérifier l'installation de kubectl
   command: kubectl version --client
   register: kubectl_version_output
   changed_when: false
+  failed_when: kubectl_version_output.rc != 0
 
 - name: Afficher la version de kubectl
   debug:
-    msg: "{{ kubectl_version_output.stdout }}"
+    msg: "✅ kubectl installé : {{ kubectl_version_output.stdout }}"
 
 - name: Vérifier l'installation de Minikube
   command: minikube version
   register: minikube_version_output
   changed_when: false
+  failed_when: minikube_version_output.rc != 0
 
 - name: Afficher la version de Minikube
   debug:
-    msg: "{{ minikube_version_output.stdout }}"
+    msg: "✅ Minikube installé : {{ minikube_version_output.stdout }}"
+
+# =================== NETTOYAGE ===================
+
+- name: Nettoyer les fichiers temporaires
+  file:
+    path: /tmp/k8s-downloads
+    state: absent
+  when: cleanup_temp_files | default(true)

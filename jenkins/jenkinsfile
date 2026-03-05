@@ -1,0 +1,124 @@
+pipeline {
+    // Utilise n'importe quel agent disponible pour exécuter le pipeline
+    agent any
+
+    // Définition des variables d'environnement utilisées dans le pipeline
+    environment {
+        GITHUB_REPO = 'https://github.com/ADONIS-IX/Projet_Systeme_Reparti_SI.git'
+        DOCKER_HUB_USER = 'adonisdocker'
+        DOCKER_REGISTRY_CREDS = credentials('dockerhub-credentials')
+        
+        // URL que le navigateur utilisera pour contacter le backend
+        // En local avec port-forward, c'est généralement http://localhost:8000/api
+        REACT_APP_API_URL = "http://localhost:8000/api"
+        
+        // Nom des images
+        BACKEND_IMAGE = "${DOCKER_HUB_USER}/backend"
+        FRONTEND_IMAGE = "${DOCKER_HUB_USER}/frontend"
+    }
+
+    stages {
+        stage('Preparation') {
+            steps {
+                echo 'Nettoyage et récupération du code...'
+                checkout scm
+            }
+        }
+
+        stage('🔍 Linting & Tests') {
+            parallel {
+                stage('Backend') {
+                    steps {
+                        dir('backend') {
+                            sh '''
+                                python3 -m venv venv
+                                . venv/bin/activate
+                                pip install -r requirements.txt flake8
+                                flake8 --max-line-length=120 --exclude=venv,migrations .
+                            '''
+                        }
+                    }
+                }
+                stage('Frontend') {
+                    steps {
+                        dir('frontend') {
+                            sh 'npm ci'
+                            // sh 'npm run lint' // Décommente si tu as un linter
+                        }
+                    }
+                }
+            }
+        }
+
+        stage('📦 Build & Push Images') {
+            steps {
+                script {
+                    // Login Docker Hub
+                    sh "echo ${DOCKER_REGISTRY_CREDS_PSW} | docker login -u ${DOCKER_REGISTRY_CREDS_USR} --password-stdin"
+
+                    // Build & Push Backend
+                    sh """
+                        docker build -t ${BACKEND_IMAGE}:${BUILD_NUMBER} ./backend
+                        docker tag ${BACKEND_IMAGE}:${BUILD_NUMBER} ${BACKEND_IMAGE}:latest
+                        docker push ${BACKEND_IMAGE}:${BUILD_NUMBER}
+                        docker push ${BACKEND_IMAGE}:latest
+                    """
+
+                    // Build & Push Frontend avec injection de l'URL API
+                    sh """
+                        docker build --build-arg REACT_APP_API_URL=${REACT_APP_API_URL} \
+                                     -t ${FRONTEND_IMAGE}:${BUILD_NUMBER} ./frontend
+                        docker tag ${FRONTEND_IMAGE}:${BUILD_NUMBER} ${FRONTEND_IMAGE}:latest
+                        docker push ${FRONTEND_IMAGE}:${BUILD_NUMBER}
+                        docker push ${FRONTEND_IMAGE}:latest
+                    """
+                }
+            }
+        }
+
+        stage('☸️ Deploy to Kubernetes') {
+            steps {
+                script {
+                    // 1. Appliquer les manifests (Services, Deployments, Secrets)
+                    sh "kubectl apply -f k8s/"
+
+                    // 2. Mettre à jour les images avec le nouveau tag du build
+                    sh """
+                        kubectl set image deployment/backend backend=${BACKEND_IMAGE}:${BUILD_NUMBER}
+                        kubectl set image deployment/frontend frontend=${FRONTEND_IMAGE}:${BUILD_NUMBER}
+                    """
+
+                    // 3. Vérifier que le déploiement se passe bien
+                    sh "kubectl rollout status deployment/backend --timeout=90s"
+                    sh "kubectl rollout status deployment/frontend --timeout=90s"
+                }
+            }
+        }
+
+        stage('🗄️ Database Migrations') {
+            steps {
+                script {
+                    echo "Exécution des migrations sur le Pod Backend..."
+                    // Récupère le nom d'un des pods backend en cours d'exécution
+                    def backendPod = sh(script: "kubectl get pods -l app=backend -o jsonpath='{.items[0].metadata.name}'", returnStdout: true).trim()
+                    
+                    // Exécute la migration Django
+                    sh "kubectl exec ${backendPod} -- python manage.py migrate --noinput"
+                }
+            }
+        }
+    }
+
+    post {
+        success {
+            echo "Pipeline terminé avec succès ! ✅"
+        }
+        failure {
+            echo "Erreur lors de l'exécution du Pipeline... ❌"
+        }
+        always {
+            sh "docker logout"
+            cleanWs()
+        }
+    }
+}

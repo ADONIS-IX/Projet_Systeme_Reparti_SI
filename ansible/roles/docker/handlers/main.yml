@@ -1,0 +1,9 @@
+---
+- name: Redémarrer Docker
+  service:
+    name: docker
+    state: restarted
+    daemon_reload: yes
+
+- name: Recharger Docker
+  command: systemctl reload docker

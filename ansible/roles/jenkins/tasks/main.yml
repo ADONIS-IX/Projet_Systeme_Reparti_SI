@@ -1,50 +1,121 @@
 ---
-# Installation de Jenkins
+# Installation de Jenkins avec configuration sécurisée
 
-- name: Ajouter la clé Jenkins
-  apt_key:
-    url: https://pkg.jenkins.io/debian-stable/jenkins.io-2023.key
-    state: present
-  when: ansible_os_family == "Debian"
+- name: Installer les dépendances
+  block:
+    # =================== JAVA ===================
+    - name: Installer Java
+      apt:
+        name: "openjdk-{{ java_version }}-jdk"
+        state: present
+        update_cache: yes
+      when: ansible_os_family == "Debian"
 
-- name: Ajouter le dépôt Jenkins
-  apt_repository:
-    repo: "deb https://pkg.jenkins.io/debian-stable binary/"
-    state: present
-  when: ansible_os_family == "Debian"
+    - name: Installer Java (RedHat)
+      yum:
+        name: "java-{{ java_version }}-openjdk-devel"
+        state: present
+      when: ansible_os_family == "RedHat"
 
-- name: Installer Java (requis pour Jenkins)
-  apt:
-    name: openjdk-11-jdk
-    state: present
-  when: ansible_os_family == "Debian"
+    # =================== DÉPÔT JENKINS ===================
+    - name: Ajouter la clé Jenkins (Debian)
+      apt_key:
+        url: "{{ jenkins_key_url }}"
+        state: present
+      when: ansible_os_family == "Debian"
+      register: jenkins_key_added
+      retries: 3
+      delay: 5
 
-- name: Installer Jenkins
-  apt:
-    name: jenkins
-    state: present
-    update_cache: yes
-  when: ansible_os_family == "Debian"
+    - name: Ajouter le dépôt Jenkins (Debian)
+      apt_repository:
+        repo: "{{ jenkins_repo }}"
+        state: present
+        filename: jenkins
+      when: ansible_os_family == "Debian"
 
-- name: Démarrer et activer Jenkins
-  service:
-    name: jenkins
-    state: started
-    enabled: yes
+    # =================== JENKINS ===================
+    - name: Installer Jenkins
+      apt:
+        name: "jenkins{% if jenkins_version != 'latest' %}={{ jenkins_version }}{% endif %}"
+        state: present
+        update_cache: yes
+      when: ansible_os_family == "Debian"
+      register: jenkins_installed
 
-- name: Attendre que Jenkins démarre
-  wait_for:
-    port: 8080
-    delay: 10
-    timeout: 60
+    - name: Créer répertoire de base Jenkins
+      file:
+        path: /var/lib/jenkins
+        owner: jenkins
+        group: jenkins
+        mode: '0755'
+        state: directory
 
-- name: Récupérer le mot de passe initial Jenkins
-  command: cat /var/lib/jenkins/secrets/initialAdminPassword
-  register: jenkins_password
-  changed_when: false
-  ignore_errors: yes
+    # =================== SERVICE ===================
+    - name: Recharger systemd
+      systemd:
+        daemon_reload: yes
 
-- name: Afficher le mot de passe initial Jenkins
+    - name: Démarrer et activer Jenkins
+      service:
+        name: jenkins
+        state: started
+        enabled: yes
+      register: jenkins_service
+
+    - name: Vérifier l'état du service Jenkins
+      systemd:
+        name: jenkins
+      register: jenkins_status
+
+    - name: Attendre que Jenkins démarre
+      wait_for:
+        port: "{{ jenkins_port }}"
+        delay: 10
+        timeout: 300
+        state: started
+        host: 127.0.0.1
+      retries: 3
+      delay: 5
+
+    # =================== MOT DE PASSE INITIAL ===================
+    - name: Vérifier si le fichier de mot de passe initial existe
+      stat:
+        path: /var/lib/jenkins/secrets/initialAdminPassword
+      register: jenkins_init_password_file
+
+    - name: Récupérer le mot de passe initial Jenkins
+      slurp:
+        src: /var/lib/jenkins/secrets/initialAdminPassword
+      register: jenkins_password_file
+      when: jenkins_init_password_file.stat.exists
+      no_log: true
+
+    - name: Sauvegarder le mot de passe Jenkins de façon sécurisée
+      copy:
+        content: "{{ jenkins_password_file.content | b64decode }}"
+        dest: /root/.jenkins_initial_password
+        mode: '0600'
+        owner: root
+        group: root
+      when: jenkins_init_password_file.stat.exists
+      no_log: true
+
+    - name: Message d'information Jenkins
+      debug:
+        msg: |
+          ✅ Jenkins est maintenant installé !
+          📌 Accédez à : http://{{ ansible_host }}:{{ jenkins_port }}
+          🔐 Le mot de passe initial a été sauvegardé dans /root/.jenkins_initial_password
+      when: not ansible_check_mode
+
+  tags:
+    - jenkins
+    - ci-cd
+
+- name: Afficher le statut final
   debug:
-    msg: "Mot de passe initial Jenkins: {{ jenkins_password.stdout }}"
-  when: jenkins_password.stdout is defined
+    msg: |
+      ✅ Installation Jenkins terminée
+      🔍 Status: {{ jenkins_status.status.ActiveState }}
+      📦 Version: {{ jenkins_installed.stdout | default('Latest') }}

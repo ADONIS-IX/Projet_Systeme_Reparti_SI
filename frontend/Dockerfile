@@ -28,6 +28,10 @@ FROM nginx:alpine
 # Copier les fichiers build depuis le stage précédent
 COPY --from=builder /app/build /usr/share/nginx/html
 
+# Remplacer la configuration Nginx par défaut avec notre config personnalisée
+# (proxy /api/ → backend, support React Router, gzip, headers sécurité)
+COPY nginx.conf /etc/nginx/conf.d/default.conf
+
 # Exposer le port 80
 EXPOSE 80
 

@@ -7,7 +7,6 @@ pipeline {
 
         // ── Docker Hub ────────────────────────────────────────────────────
         DOCKER_HUB_USER   = 'adonisdocker'
-        DOCKER_HUB_CREDS  = credentials('dockerhub-credentials')
         BACKEND_IMAGE     = "${DOCKER_HUB_USER}/backend"
         FRONTEND_IMAGE    = "${DOCKER_HUB_USER}/frontend"
 
@@ -30,7 +29,7 @@ pipeline {
         stage('Linting & Tests') {
             parallel {
 
-                stage('Backend — Lint') {
+                stage('Backend — Lint & Tests') {
                     steps {
                         dir('backend') {
                             sh '''
@@ -40,15 +39,19 @@ pipeline {
                                 flake8 --max-line-length=120 \
                                        --exclude=.venv,migrations \
                                        .
+                                python manage.py test --verbosity=2
                             '''
                         }
                     }
                 }
 
-                stage('Frontend — Install') {
+                stage('Frontend — Lint & Tests') {
                     steps {
                         dir('frontend') {
-                            sh 'npm ci --silent'
+                            sh '''
+                                npm ci --silent
+                                CI=true npm test -- --watchAll=false
+                            '''
                         }
                     }
                 }
@@ -58,9 +61,12 @@ pipeline {
         // ── Étape 3 : Build & Push des images Docker ──────────────────────
         stage('Build & Push Images') {
             steps {
-                script {
-                    // Connexion Docker Hub
-                    sh "echo ${DOCKER_HUB_CREDS_PSW} | docker login -u ${DOCKER_HUB_CREDS_USR} --password-stdin"
+                withCredentials([usernamePassword(
+                    credentialsId: 'dockerhub-credentials',
+                    usernameVariable: 'DOCKER_USER',
+                    passwordVariable: 'DOCKER_PASS'
+                )]) {
+                    sh 'echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin'
 
                     // Backend
                     sh """
@@ -89,8 +95,14 @@ pipeline {
         stage('Déploiement Kubernetes') {
             steps {
                 script {
-                    // Appliquer tous les manifests (Secrets inclus → pas d'interaction)
+                    // Supprimer l'ancien Job de migration s'il existe
+                    sh 'kubectl delete job django-migrate --ignore-not-found=true'
+
+                    // Appliquer tous les manifests (Secrets inclus)
                     sh 'kubectl apply -f k8s/'
+
+                    // Attendre la fin du Job de migration Django
+                    sh 'kubectl wait --for=condition=complete job/django-migrate --timeout=120s'
 
                     // Mettre à jour les images avec le tag du build courant
                     sh """
@@ -101,19 +113,6 @@ pipeline {
                     // Attendre la fin du rollout
                     sh 'kubectl rollout status deployment/backend  --timeout=120s'
                     sh 'kubectl rollout status deployment/frontend --timeout=120s'
-                }
-            }
-        }
-
-        // ── Étape 5 : Migrations Django ───────────────────────────────────
-        stage('Migrations Django') {
-            steps {
-                script {
-                    def pod = sh(
-                        script: "kubectl get pods -l app=backend -o jsonpath='{.items[0].metadata.name}'",
-                        returnStdout: true
-                    ).trim()
-                    sh "kubectl exec ${pod} -- python manage.py migrate --noinput"
                 }
             }
         }

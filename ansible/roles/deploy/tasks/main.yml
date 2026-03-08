@@ -24,9 +24,8 @@
 - name: Construire l'image frontend
   shell: |
     eval $(minikube docker-env)
-    MINIKUBE_IP=$(minikube ip)
     docker build \
-      --build-arg REACT_APP_API_URL="http://${MINIKUBE_IP}:30800/api" \
+      --build-arg REACT_APP_API_URL="/api" \
       -t adonisdocker/frontend:latest {{ playbook_dir }}/../frontend
   become_user: "{{ ansible_user | default('root') }}"
 

@@ -1,96 +1,85 @@
 #!/bin/bash
-
-# Arrêter le script à la moindre erreur
+# deploy.sh — Déploiement Kubernetes sans interaction (Windows/Minikube)
 set -e
 
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-cd "$SCRIPT_DIR/.." || exit 1
+GREEN='\033[0;32m'; YELLOW='\033[1;33m'; RED='\033[0;31m'; NC='\033[0m'
+ok()  { echo -e "${GREEN}✓ $1${NC}"; }
+msg() { echo -e "${YELLOW}▶ $1${NC}"; }
+err() { echo -e "${RED}✗ $1${NC}"; exit 1; }
 
-echo "Déploiement Kubernetes"
-echo "========================="
+# ── 1. Vérifier Minikube ────────────────────────────────────────────────────
+msg "Vérification de Minikube..."
+minikube status &>/dev/null || err "Minikube n'est pas démarré. Lancez : minikube start --driver=docker"
+ok "Minikube actif"
 
-# Couleurs
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-RED='\033[0;31m'
-NC='\033[0m' # No Color
-
-# 1. Vérifier Minikube
-echo -e "${YELLOW}Vérification de Minikube...${NC}"
-if ! minikube status &> /dev/null; then
-    echo -e "${RED}Erreur: Minikube n'est pas démarré${NC}"
-    echo "Démarrez Minikube avec: minikube start --driver=docker"
-    exit 1
-fi
-echo -e "${GREEN}✓ Minikube est actif${NC}"
-
-# 2. Configurer l'environnement Docker
-echo -e "${YELLOW}Configuration de Docker pour Minikube...${NC}"
+# ── 2. Pointer Docker vers le daemon Minikube ───────────────────────────────
+msg "Configuration de l'environnement Docker (Minikube)..."
 eval $(minikube docker-env)
-echo -e "${GREEN}✓ Docker configuré${NC}"
+ok "Docker pointé sur Minikube"
 
-# 3. Construire les images
-echo -e "${YELLOW}Construction des images Docker...${NC}"
-if [ -d "./backend" ] && [ -d "./frontend" ]; then
-    docker build -t backend:latest ./backend
-    docker build -t frontend:latest ./frontend
-    echo -e "${GREEN}✓ Images construites${NC}"
-else
-    echo -e "${RED}Erreur : Les dossiers ./backend ou ./frontend sont introuvables.${NC}"
-    exit 1
-fi
+# ── 3. Build des images en local dans le daemon Minikube ────────────────────
+SCRIPT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 
-# 4. Créer ou mettre à jour les secrets
-echo -e "${YELLOW}Création/Mise à jour des secrets...${NC}"
-read -sp "Mot de passe PostgreSQL: " DB_PASSWORD
-echo
-kubectl create secret generic db-secret \
-  --from-literal=password=$DB_PASSWORD \
-  --dry-run=client -o yaml | kubectl apply -f -
+msg "Build image backend..."
+docker build -t adonisdocker/backend:latest "$SCRIPT_DIR/backend"
+ok "Image backend construite"
 
-read -sp "Django SECRET_KEY: " DJANGO_SECRET
-echo
-kubectl create secret generic django-secret \
-  --from-literal=secret-key=$DJANGO_SECRET \
-  --dry-run=client -o yaml | kubectl apply -f -
-echo -e "${GREEN}✓ Secrets créés/mis à jour${NC}"
+msg "Build image frontend..."
+docker build \
+  --build-arg REACT_APP_API_URL="/api" \
+  -t adonisdocker/frontend:latest "$SCRIPT_DIR/frontend"
+ok "Image frontend construite"
 
-# 5. Déployer PostgreSQL
-echo -e "${YELLOW}Déploiement de PostgreSQL...${NC}"
-kubectl apply -f k8s/postgres-pvc.yaml
-kubectl apply -f k8s/postgres-deployment.yaml
-kubectl rollout status deployment/postgres --timeout=300s
+# ── 4. Appliquer les manifests Kubernetes ───────────────────────────────────
+msg "Application des manifests Kubernetes..."
+kubectl apply -f "$SCRIPT_DIR/k8s/secrets.yaml"
+kubectl apply -f "$SCRIPT_DIR/k8s/postgres-pvc.yaml"
+kubectl apply -f "$SCRIPT_DIR/k8s/postgres-deployment.yaml"
 
-# 6. Déployer Backend
-echo -e "${YELLOW}Déploiement du Backend...${NC}"
-kubectl apply -f k8s/backend-deployment.yaml
-kubectl rollout status deployment/backend --timeout=300s
+msg "Attente PostgreSQL..."
+kubectl rollout status deployment/postgres --timeout=120s
+ok "PostgreSQL prêt"
 
-# 7. Migrations Django
-echo -e "${YELLOW}Application des migrations Django...${NC}"
-BACKEND_POD=$(kubectl get pods -l app=backend -o jsonpath='{.items[0].metadata.name}')
-kubectl exec "$BACKEND_POD" -- python manage.py migrate
-echo -e "${GREEN}✓ Migrations appliquées${NC}"
+# ── 5. Job de migration Django ───────────────────────────────────────────────
+msg "Suppression de l'ancien Job de migration (si existant)..."
+kubectl delete job django-migrate --ignore-not-found=true
 
-# 8. Déployer Frontend
-echo -e "${YELLOW}Déploiement du Frontend...${NC}"
-kubectl apply -f k8s/frontend-deployment.yaml
-kubectl rollout status deployment/frontend --timeout=300s
+msg "Lancement du Job de migration Django..."
+kubectl apply -f "$SCRIPT_DIR/k8s/backend-deployment.yaml"
 
-# Fin
+msg "Attente de la fin des migrations..."
+kubectl wait --for=condition=complete job/django-migrate --timeout=120s \
+  || {
+    echo ""
+    err "Le Job de migration a échoué. Logs :"
+    kubectl logs job/django-migrate
+  }
+ok "Migrations Django terminées"
+
+# ── 6. Déploiement Backend ───────────────────────────────────────────────────
+msg "Attente du Backend..."
+kubectl rollout status deployment/backend --timeout=180s
+ok "Backend prêt"
+
+# ── 7. Déploiement Frontend ──────────────────────────────────────────────────
+kubectl apply -f "$SCRIPT_DIR/k8s/frontend-deployment.yaml"
+msg "Attente Frontend..."
+kubectl rollout status deployment/frontend --timeout=120s
+ok "Frontend prêt"
+
+# ── 8. Résumé ────────────────────────────────────────────────────────────────
+MINIKUBE_IP=$(minikube ip)
 echo ""
-echo -e "${GREEN}=========================${NC}"
-echo -e "${GREEN}Déploiement terminé !${NC}"
-echo -e "${GREEN}=========================${NC}"
+echo -e "${GREEN}═══════════════════════════════════════${NC}"
+echo -e "${GREEN}  Déploiement terminé avec succès ! 🚀  ${NC}"
+echo -e "${GREEN}═══════════════════════════════════════${NC}"
 echo ""
-echo "Accès aux services :"
-echo "-------------------"
-echo "Frontend: $(minikube service frontend --url)"
-echo "Backend: $(minikube service backend --url)"
+echo "  Frontend  →  http://${MINIKUBE_IP}:30080"
+echo "  Backend   →  http://${MINIKUBE_IP}:30800/api"
 echo ""
 echo "Commandes utiles :"
-echo "- Voir les pods: kubectl get pods"
-echo "- Voir les services: kubectl get services"
-echo "- Logs backend: kubectl logs -f deployment/backend"
-echo "- Logs frontend: kubectl logs -f deployment/frontend"
-echo "- Dashboard: minikube dashboard"
+echo "  kubectl get pods"
+echo "  kubectl get services"
+echo "  kubectl logs -f deployment/backend"
+echo "  kubectl logs job/django-migrate"
+echo "  minikube dashboard"

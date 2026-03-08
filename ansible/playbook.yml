@@ -1,15 +1,24 @@
 ---
-- name: Configuration complète de l'infrastructure
+# playbook.yml — Configuration complète de l'infrastructure
+# Cible : machine locale sous Linux (WSL2 recommandé sous Windows)
+
+- name: Configuration complète de l'infrastructure DevOps
   hosts: local
   become: yes
-  vars_prompt:
-    - name: db_password
-      prompt: "Mot de passe PostgreSQL"
-      private: yes
-    - name: django_secret_key
-      prompt: "Django SECRET_KEY"
-      private: yes
-  
+
+  vars:
+    # ── Secrets applicatifs ──────────────────────────────────────────────────
+    # Ces valeurs sont cohérentes avec k8s/secrets.yaml et docker-compose.yml
+    db_password: "postgres"
+    django_secret_key: "django-insecure-v78-8u4ehx+6@8igg671&_+qe5e7s4miy-&crk$$s1^j=$8+f6"
+
+    # ── Versions ─────────────────────────────────────────────────────────────
+    docker_version: "latest"
+    kubectl_version: "v1.28.0"
+    minikube_version: "1.32.0"
+    java_version: "21"
+    jenkins_port: 8080
+
   roles:
     - docker
     - kubernetes
@@ -17,19 +26,18 @@
     - deploy
 
   post_tasks:
-    - name: Afficher le résumé de l'installation
+    - name: Résumé de l'installation
       debug:
         msg:
-          - "=========================="
-          - "Installation terminée !"
-          - "=========================="
-          - "Docker: Installé"
-          - "Kubernetes: Installé"
-          - "Jenkins: Installé sur http://localhost:8080"
-          - "Application: Déployée sur Kubernetes"
-          - ""
-          - "Commandes utiles:"
-          - "- kubectl get pods"
-          - "- kubectl get services"
-          - "- minikube service frontend --url"
-          - "- minikube service backend --url"
+          - "══════════════════════════════════"
+          - " Installation terminée avec succès"
+          - "══════════════════════════════════"
+          - " Docker     : installé"
+          - " Minikube   : installé"
+          - " kubectl    : installé"
+          - " Jenkins    : http://localhost:{{ jenkins_port }}"
+          - " Application: déployée sur Kubernetes"
+          - "──────────────────────────────────"
+          - " kubectl get pods"
+          - " kubectl get services"
+          - " minikube service frontend --url"

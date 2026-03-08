@@ -1,13 +1,7 @@
 ---
-# Configuration Docker
 docker_version: "latest"
 docker_architecture: "{{ 'arm64' if ansible_machine == 'aarch64' else 'amd64' }}"
-
-# Options
-enable_docker_user_group: false  # ⚠️ Risque de sécurité
-test_docker_installation: false
-
-# Configuration Docker daemon (optionnel)
+enable_docker_user_group: false
 docker_daemon_config:
   debug: false
   log-driver: "json-file"

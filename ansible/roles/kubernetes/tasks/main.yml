@@ -1,100 +1,85 @@
 ---
-# Installation de Kubernetes (kubectl et minikube)
+# roles/kubernetes/tasks/main.yml — Installation de kubectl et Minikube
 
-- name: Définir les versions par défaut
-  set_fact:
-    kubectl_version: "{{ kubectl_version | default('v1.28.0') }}"
-    minikube_version: "{{ minikube_version | default('1.32.0') }}"
-
-- name: Créer le répertoire temporaire pour les téléchargements
+- name: Créer le répertoire de téléchargements temporaires
   file:
     path: /tmp/k8s-downloads
     state: directory
     mode: '0755'
 
-# =================== KUBECTL ===================
-
-- name: Vérifier si kubectl est déjà installé
+# ── kubectl ─────────────────────────────────────────────────────────────────
+- name: Vérifier si kubectl est déjà présent
   stat:
     path: /usr/local/bin/kubectl
-  register: kubectl_installed
+  register: _kubectl_stat
 
 - name: Installer kubectl
   block:
-    - name: Télécharger kubectl
+    - name: Télécharger kubectl {{ kubectl_version }}
       get_url:
         url: "https://dl.k8s.io/release/{{ kubectl_version }}/bin/linux/amd64/kubectl"
         dest: /tmp/k8s-downloads/kubectl
         mode: '0755'
         checksum: "sha256:https://dl.k8s.io/release/{{ kubectl_version }}/bin/linux/amd64/kubectl.sha256"
-      register: kubectl_download
       retries: 3
       delay: 5
 
-    - name: Copier kubectl dans /usr/local/bin
+    - name: Installer kubectl dans /usr/local/bin
       copy:
         src: /tmp/k8s-downloads/kubectl
         dest: /usr/local/bin/kubectl
         mode: '0755'
         remote_src: yes
-      when: kubectl_download is changed
 
-  when: not kubectl_installed.stat.exists or force_reinstall | default(false)
+  when: not _kubectl_stat.stat.exists or force_reinstall
 
-# =================== MINIKUBE ===================
-
-- name: Vérifier si Minikube est déjà installé
+# ── Minikube ─────────────────────────────────────────────────────────────────
+- name: Vérifier si Minikube est déjà présent
   stat:
     path: /usr/local/bin/minikube
-  register: minikube_installed
+  register: _minikube_stat
 
 - name: Installer Minikube
   block:
-    - name: Télécharger Minikube
+    - name: Télécharger Minikube v{{ minikube_version }}
       get_url:
         url: "https://github.com/kubernetes/minikube/releases/download/v{{ minikube_version }}/minikube-linux-amd64"
         dest: /tmp/k8s-downloads/minikube
         mode: '0755'
-      register: minikube_download
       retries: 3
       delay: 5
 
-    - name: Copier Minikube dans /usr/local/bin
+    - name: Installer Minikube dans /usr/local/bin
       copy:
         src: /tmp/k8s-downloads/minikube
         dest: /usr/local/bin/minikube
         mode: '0755'
         remote_src: yes
-      when: minikube_download is changed
 
-  when: not minikube_installed.stat.exists or force_reinstall | default(false)
+  when: not _minikube_stat.stat.exists or force_reinstall
 
-# =================== VÉRIFICATIONS ===================
-
-- name: Vérifier l'installation de kubectl
+# ── Vérifications ────────────────────────────────────────────────────────────
+- name: Vérifier kubectl
   command: kubectl version --client
-  register: kubectl_version_output
+  register: _kubectl_ver
   changed_when: false
-  failed_when: kubectl_version_output.rc != 0
 
-- name: Afficher la version de kubectl
+- name: Afficher la version kubectl
   debug:
-    msg: "✅ kubectl installé : {{ kubectl_version_output.stdout }}"
+    msg: "✅ kubectl : {{ _kubectl_ver.stdout_lines[0] }}"
 
-- name: Vérifier l'installation de Minikube
+- name: Vérifier Minikube
   command: minikube version
-  register: minikube_version_output
+  register: _minikube_ver
   changed_when: false
-  failed_when: minikube_version_output.rc != 0
 
-- name: Afficher la version de Minikube
+- name: Afficher la version Minikube
   debug:
-    msg: "✅ Minikube installé : {{ minikube_version_output.stdout }}"
+    msg: "✅ Minikube : {{ _minikube_ver.stdout_lines[0] }}"
 
-# =================== NETTOYAGE ===================
-
-- name: Nettoyer les fichiers temporaires
+# ── Nettoyage ────────────────────────────────────────────────────────────────
+- name: Supprimer les fichiers temporaires
   file:
     path: /tmp/k8s-downloads
     state: absent
-  when: cleanup_temp_files | default(true)
+  when: cleanup_temp_files

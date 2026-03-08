@@ -1,7 +1,9 @@
 import axios from 'axios';
 
-// URL de base de l'API (peut être configurée via variable d'environnement)
-const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://backend:8000/api';
+// En production (Docker Compose, Kubernetes), le frontend est servi par Nginx
+// qui proxifie /api/ vers le backend. On utilise donc une URL relative.
+// En développement local (npm start), on pointe directement vers le backend.
+const API_BASE_URL = process.env.REACT_APP_API_URL || '/api';
 
 // Instance axios configurée
 const api = axios.create({

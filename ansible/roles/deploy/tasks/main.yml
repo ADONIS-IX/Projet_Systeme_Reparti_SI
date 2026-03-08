@@ -1,70 +1,48 @@
 ---
-# Déploiement de l'application sur Kubernetes
+# roles/deploy/tasks/main.yml — Déploiement de l'application sur Kubernetes
+# Les variables db_password et django_secret_key sont définies dans playbook.yml
 
+# ── Démarrer Minikube ────────────────────────────────────────────────────────
+- name: Démarrer Minikube (driver Docker)
+  command: minikube start --driver=docker
+  become_user: "{{ ansible_user | default('root') }}"
+  register: _minikube_start
+  changed_when: "'Done' in _minikube_start.stdout"
+
+# ── Copier les manifests ────────────────────────────────────────────────────
 - name: Copier les manifests Kubernetes
   copy:
     src: "{{ playbook_dir }}/../k8s/"
     dest: /tmp/k8s-manifests/
     mode: '0644'
 
-- name: Démarrer Minikube
-  command: minikube start --driver=docker
-  become_user: "{{ ansible_user }}"
-  register: minikube_start
-  changed_when: "'Done!' in minikube_start.stdout"
-
-- name: Configurer Docker pour Minikube
-  shell: eval $(minikube docker-env)
-  become_user: "{{ ansible_user }}"
-
-- name: Construire l'image backend
-  docker_image:
-    name: backend
-    tag: latest
-    build:
-      path: "{{ playbook_dir }}/../backend"
-    source: build
-  become_user: "{{ ansible_user }}"
+# ── Construire les images Docker ─────────────────────────────────────────────
+- name: Configurer Docker pour utiliser le daemon Minikube
+  shell: eval $(minikube docker-env) && docker build -t adonisdocker/backend:latest {{ playbook_dir }}/../backend
+  become_user: "{{ ansible_user | default('root') }}"
 
 - name: Construire l'image frontend
-  docker_image:
-    name: frontend
-    tag: latest
-    build:
-      path: "{{ playbook_dir }}/../frontend"
-    source: build
-  become_user: "{{ ansible_user }}"
+  shell: |
+    eval $(minikube docker-env)
+    MINIKUBE_IP=$(minikube ip)
+    docker build \
+      --build-arg REACT_APP_API_URL="http://${MINIKUBE_IP}:30800/api" \
+      -t adonisdocker/frontend:latest {{ playbook_dir }}/../frontend
+  become_user: "{{ ansible_user | default('root') }}"
 
-- name: Créer le secret db-secret
+# ── Créer les Secrets Kubernetes ─────────────────────────────────────────────
+- name: Appliquer le manifest des secrets
   k8s:
     state: present
-    definition:
-      apiVersion: v1
-      kind: Secret
-      metadata:
-        name: db-secret
-      type: Opaque
-      stringData:
-        password: "{{ db_password }}"
+    src: /tmp/k8s-manifests/secrets.yaml
 
-- name: Créer le secret django-secret
-  k8s:
-    state: present
-    definition:
-      apiVersion: v1
-      kind: Secret
-      metadata:
-        name: django-secret
-      type: Opaque
-      stringData:
-        secret-key: "{{ django_secret_key }}"
-
-- name: Déployer PostgreSQL
+# ── Déployer PostgreSQL ───────────────────────────────────────────────────────
+- name: Appliquer le PVC PostgreSQL
   k8s:
     state: present
     src: /tmp/k8s-manifests/postgres-pvc.yaml
 
-- name: Déployer PostgreSQL deployment
+- name: Déployer PostgreSQL
   k8s:
     state: present
     src: /tmp/k8s-manifests/postgres-deployment.yaml
@@ -72,52 +50,55 @@
 - name: Attendre que PostgreSQL soit prêt
   k8s_info:
     kind: Pod
-    label_selectors:
-      - app=postgres
+    label_selectors: ["app=postgres"]
     wait: yes
     wait_condition:
       type: Ready
       status: "True"
     wait_timeout: 120
 
-- name: Déployer Backend
+# ── Déployer Backend ──────────────────────────────────────────────────────────
+- name: Déployer le Backend Django
   k8s:
     state: present
     src: /tmp/k8s-manifests/backend-deployment.yaml
 
-- name: Attendre que le backend soit prêt
+- name: Attendre que le Backend soit prêt
   k8s_info:
     kind: Pod
-    label_selectors:
-      - app=backend
+    label_selectors: ["app=backend"]
     wait: yes
     wait_condition:
       type: Ready
       status: "True"
     wait_timeout: 300
 
-- name: Déployer Frontend
+# ── Déployer Frontend ─────────────────────────────────────────────────────────
+- name: Déployer le Frontend React
   k8s:
     state: present
     src: /tmp/k8s-manifests/frontend-deployment.yaml
 
-- name: Attendre que le frontend soit prêt
+- name: Attendre que le Frontend soit prêt
   k8s_info:
     kind: Pod
-    label_selectors:
-      - app=frontend
+    label_selectors: ["app=frontend"]
     wait: yes
     wait_condition:
       type: Ready
       status: "True"
-    wait_timeout: 300
+    wait_timeout: 120
 
-- name: Obtenir l'URL du frontend
-  command: minikube service frontend --url
-  register: frontend_url
-  become_user: "{{ ansible_user }}"
+# ── URLs d'accès ──────────────────────────────────────────────────────────────
+- name: Récupérer l'IP Minikube
+  command: minikube ip
+  register: _minikube_ip
+  become_user: "{{ ansible_user | default('root') }}"
   changed_when: false
 
-- name: Afficher l'URL du frontend
+- name: Afficher les URLs d'accès
   debug:
-    msg: "Frontend accessible sur: {{ frontend_url.stdout }}"
+    msg:
+      - "✅ Application déployée avec succès !"
+      - "🌐 Frontend  → http://{{ _minikube_ip.stdout }}:30080"
+      - "🔌 Backend   → http://{{ _minikube_ip.stdout }}:30800/api"

@@ -9,8 +9,8 @@
   vars:
     # ── Secrets applicatifs ──────────────────────────────────────────────────
     # Ces valeurs sont cohérentes avec k8s/secrets.yaml et docker-compose.yml
-    db_password: "postgres"
-    django_secret_key: "django-insecure-v78-8u4ehx+6@8igg671&_+qe5e7s4miy-&crk$$s1^j=$8+f6"
+    db_password: "adriano"
+    django_secret_key: "unjourlesoleilbrillera"
 
     # ── Versions ─────────────────────────────────────────────────────────────
     docker_version: "latest"

@@ -79,6 +79,19 @@
     state: started
     enabled: yes
 
+- name: Ajouter l'utilisateur jenkins au groupe docker
+  user:
+    name: jenkins
+    groups: docker
+    append: yes
+  register: _jenkins_docker_group
+
+- name: Redémarrer Jenkins pour appliquer les groupes système
+  service:
+    name: jenkins
+    state: restarted
+  when: _jenkins_docker_group.changed
+
 - name: Attendre que Jenkins soit accessible sur le port {{ jenkins_port }}
   wait_for:
     host: 127.0.0.1

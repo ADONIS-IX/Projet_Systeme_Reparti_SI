@@ -109,12 +109,20 @@ pipeline {
 
                     // Supprimer l'ancien Job de migration s'il existe
                     sh 'kubectl delete job django-migrate --ignore-not-found=true'
+                    sh 'kubectl wait --for=delete job/django-migrate --timeout=60s || true'
 
-                    // Appliquer tous les manifests (Secrets inclus)
-                    sh 'kubectl apply -f k8s/'
+                    // Rendre le manifest backend avec l'image du build courant (Job + Deployment backend)
+                    sh """
+                        sed 's|adonisdocker/backend:latest|${BACKEND_IMAGE}:${BUILD_NUMBER}|g' \
+                            k8s/backend-deployment.yaml > k8s/backend-deployment.ci.yaml
+                    """
 
-                    // Aligner le Job de migration sur l'image du build courant
-                    sh "kubectl set image job/django-migrate django-migrate=${BACKEND_IMAGE}:${BUILD_NUMBER}"
+                    // Appliquer les manifests dans l'ordre
+                    sh 'kubectl apply -f k8s/secrets.yaml'
+                    sh 'kubectl apply -f k8s/postgres-pvc.yaml'
+                    sh 'kubectl apply -f k8s/postgres-deployment.yaml'
+                    sh 'kubectl apply -f k8s/frontend-deployment.yaml'
+                    sh 'kubectl apply -f k8s/backend-deployment.ci.yaml'
 
                     // Attendre la fin du Job de migration Django
                     sh 'kubectl wait --for=condition=complete job/django-migrate --timeout=120s'

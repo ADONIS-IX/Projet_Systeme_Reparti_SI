@@ -1,9 +1,11 @@
 __pycache__
+__pycache__/
 *.pyc
 *.pyo
 .git
 .env
 .env.local
+.env.*
 .venv
 venv
 env
@@ -11,6 +13,10 @@ env
 dist
 build
 .pytest_cache
+.mypy_cache
+.ruff_cache
+.coverage
+htmlcov/
 .vscode
 .idea
 *.swp

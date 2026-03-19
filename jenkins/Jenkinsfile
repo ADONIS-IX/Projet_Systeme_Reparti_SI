@@ -2,13 +2,13 @@ pipeline {
     agent any
 
     environment {
-        // ── Dépôt Git ─────────────────────────────────────────────────────
-        GITHUB_REPO       = 'https://github.com/ADONIS-IX/Projet_Systeme_Reparti_SI.git'
-
         // ── Docker Hub ────────────────────────────────────────────────────
         DOCKER_HUB_USER   = 'adonisdocker'
         BACKEND_IMAGE     = "${DOCKER_HUB_USER}/backend"
         FRONTEND_IMAGE    = "${DOCKER_HUB_USER}/frontend"
+
+        // ── Kubernetes ────────────────────────────────────────────────────
+        KUBE_CONTEXT      = 'minikube'
 
         // ── URL de l'API (inject au build du frontend) ────────────────────
         // URL relative : Nginx proxifie /api/ → backend (fonctionne en Docker Compose et Kubernetes)
@@ -70,22 +70,28 @@ pipeline {
 
                     // Backend
                     sh """
-                        docker build -t ${BACKEND_IMAGE}:${BUILD_NUMBER} \
-                                     -t ${BACKEND_IMAGE}:latest \
-                                     ./backend
+                        docker build -t ${BACKEND_IMAGE}:${BUILD_NUMBER} ./backend
+                        if [ "${BRANCH_NAME:-}" = "main" ]; then
+                            docker tag ${BACKEND_IMAGE}:${BUILD_NUMBER} ${BACKEND_IMAGE}:latest
+                        fi
                         docker push ${BACKEND_IMAGE}:${BUILD_NUMBER}
-                        docker push ${BACKEND_IMAGE}:latest
+                        if [ "${BRANCH_NAME:-}" = "main" ]; then
+                            docker push ${BACKEND_IMAGE}:latest
+                        fi
                     """
 
                     // Frontend (injection de l'URL de l'API au moment du build)
                     sh """
                         docker build \
                             --build-arg REACT_APP_API_URL=${REACT_APP_API_URL} \
-                            -t ${FRONTEND_IMAGE}:${BUILD_NUMBER} \
-                            -t ${FRONTEND_IMAGE}:latest \
-                            ./frontend
+                            -t ${FRONTEND_IMAGE}:${BUILD_NUMBER} ./frontend
+                        if [ "${BRANCH_NAME:-}" = "main" ]; then
+                            docker tag ${FRONTEND_IMAGE}:${BUILD_NUMBER} ${FRONTEND_IMAGE}:latest
+                        fi
                         docker push ${FRONTEND_IMAGE}:${BUILD_NUMBER}
-                        docker push ${FRONTEND_IMAGE}:latest
+                        if [ "${BRANCH_NAME:-}" = "main" ]; then
+                            docker push ${FRONTEND_IMAGE}:latest
+                        fi
                     """
                 }
             }
@@ -95,11 +101,18 @@ pipeline {
         stage('Déploiement Kubernetes') {
             steps {
                 script {
+                    // Forcer le bon contexte Kubernetes et vérifier l'accès API
+                    sh "kubectl config use-context ${KUBE_CONTEXT}"
+                    sh 'kubectl cluster-info'
+
                     // Supprimer l'ancien Job de migration s'il existe
                     sh 'kubectl delete job django-migrate --ignore-not-found=true'
 
                     // Appliquer tous les manifests (Secrets inclus)
                     sh 'kubectl apply -f k8s/'
+
+                    // Aligner le Job de migration sur l'image du build courant
+                    sh "kubectl set image job/django-migrate django-migrate=${BACKEND_IMAGE}:${BUILD_NUMBER}"
 
                     // Attendre la fin du Job de migration Django
                     sh 'kubectl wait --for=condition=complete job/django-migrate --timeout=120s'

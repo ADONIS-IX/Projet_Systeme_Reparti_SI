@@ -3,7 +3,14 @@ build
 .git
 .env
 .env.local
+.env.*
 npm-debug.log
+yarn-debug.log*
+yarn-error.log*
+.pnpm-store
+.cache
+.next
+dist
 .DS_Store
 coverage
 .vscode

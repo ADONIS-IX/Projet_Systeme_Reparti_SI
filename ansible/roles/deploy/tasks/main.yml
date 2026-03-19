@@ -4,10 +4,17 @@
 
 # ── Démarrer Minikube ────────────────────────────────────────────────────────
 - name: Démarrer Minikube (driver Docker)
-  command: minikube start --driver=docker
+  shell: sg docker -c 'minikube start --driver=docker'
   become_user: "{{ ansible_user | default('root') }}"
   register: _minikube_start
   changed_when: "'Done' in _minikube_start.stdout"
+
+- name: Configurer kubectl pour utiliser le contexte Minikube
+  shell: kubectl config use-context minikube
+  become_user: "{{ ansible_user | default('root') }}"
+  register: _kubectl_context
+  changed_when: "'Switched' in _kubectl_context.stdout"
+  failed_when: false
 
 # ── Copier les manifests ────────────────────────────────────────────────────
 - name: Copier les manifests Kubernetes
@@ -16,81 +23,97 @@
     dest: /tmp/k8s-manifests/
     mode: '0644'
 
+# ── Copier le code applicatif sur la VM (incrémental) ───────────────────────
+- name: Créer le répertoire source distant
+  file:
+    path: /tmp/app-src
+    state: directory
+    mode: '0755'
+
+- name: Copier le code backend sur la VM
+  copy:
+    src: "{{ playbook_dir }}/../backend/"
+    dest: /tmp/app-src/backend/
+
+- name: Copier le code frontend sur la VM
+  copy:
+    src: "{{ playbook_dir }}/../frontend/"
+    dest: /tmp/app-src/frontend/
+
 # ── Construire les images Docker ─────────────────────────────────────────────
-- name: Configurer Docker pour utiliser le daemon Minikube
-  shell: eval $(minikube docker-env) && docker build -t adonisdocker/backend:latest {{ playbook_dir }}/../backend
+- name: Construire l'image backend dans Minikube
+  shell: sg docker -c 'minikube image build -t adonisdocker/backend:latest /tmp/app-src/backend'
   become_user: "{{ ansible_user | default('root') }}"
 
 - name: Construire l'image frontend
-  shell: |
-    eval $(minikube docker-env)
-    docker build \
-      --build-arg REACT_APP_API_URL="/api" \
-      -t adonisdocker/frontend:latest {{ playbook_dir }}/../frontend
+  shell: >
+    sg docker -c 'minikube image build
+    --build-opt build-arg=REACT_APP_API_URL=/api
+    -t adonisdocker/frontend:latest /tmp/app-src/frontend'
   become_user: "{{ ansible_user | default('root') }}"
+
+- name: Nettoyer le répertoire source distant après build
+  file:
+    path: /tmp/app-src
+    state: absent
+
+- name: Vérifier l'accès au cluster Kubernetes
+  command: kubectl cluster-info
+  become_user: "{{ ansible_user | default('root') }}"
+  changed_when: false
 
 # ── Créer les Secrets Kubernetes ─────────────────────────────────────────────
 - name: Appliquer le manifest des secrets
-  k8s:
-    state: present
-    src: /tmp/k8s-manifests/secrets.yaml
+  command: kubectl apply -f /tmp/k8s-manifests/secrets.yaml
+  become_user: "{{ ansible_user | default('root') }}"
+  register: _apply_secrets
+  changed_when: "'unchanged' not in _apply_secrets.stdout"
 
 # ── Déployer PostgreSQL ───────────────────────────────────────────────────────
 - name: Appliquer le PVC PostgreSQL
-  k8s:
-    state: present
-    src: /tmp/k8s-manifests/postgres-pvc.yaml
+  command: kubectl apply -f /tmp/k8s-manifests/postgres-pvc.yaml
+  become_user: "{{ ansible_user | default('root') }}"
+  register: _apply_pg_pvc
+  changed_when: "'unchanged' not in _apply_pg_pvc.stdout"
 
 - name: Déployer PostgreSQL
-  k8s:
-    state: present
-    src: /tmp/k8s-manifests/postgres-deployment.yaml
+  command: kubectl apply -f /tmp/k8s-manifests/postgres-deployment.yaml
+  become_user: "{{ ansible_user | default('root') }}"
+  register: _apply_pg
+  changed_when: "'unchanged' not in _apply_pg.stdout"
 
 - name: Attendre que PostgreSQL soit prêt
-  k8s_info:
-    kind: Pod
-    label_selectors: ["app=postgres"]
-    wait: yes
-    wait_condition:
-      type: Ready
-      status: "True"
-    wait_timeout: 120
+  command: kubectl wait --for=condition=Ready pod -l app=postgres --timeout=120s
+  become_user: "{{ ansible_user | default('root') }}"
+  changed_when: false
 
 # ── Déployer Backend ──────────────────────────────────────────────────────────
 - name: Déployer le Backend Django
-  k8s:
-    state: present
-    src: /tmp/k8s-manifests/backend-deployment.yaml
+  command: kubectl apply -f /tmp/k8s-manifests/backend-deployment.yaml
+  become_user: "{{ ansible_user | default('root') }}"
+  register: _apply_backend
+  changed_when: "'unchanged' not in _apply_backend.stdout"
 
 - name: Attendre que le Backend soit prêt
-  k8s_info:
-    kind: Pod
-    label_selectors: ["app=backend"]
-    wait: yes
-    wait_condition:
-      type: Ready
-      status: "True"
-    wait_timeout: 300
+  command: kubectl wait --for=condition=Ready pod -l app=backend --timeout=300s
+  become_user: "{{ ansible_user | default('root') }}"
+  changed_when: false
 
 # ── Déployer Frontend ─────────────────────────────────────────────────────────
 - name: Déployer le Frontend React
-  k8s:
-    state: present
-    src: /tmp/k8s-manifests/frontend-deployment.yaml
+  command: kubectl apply -f /tmp/k8s-manifests/frontend-deployment.yaml
+  become_user: "{{ ansible_user | default('root') }}"
+  register: _apply_frontend
+  changed_when: "'unchanged' not in _apply_frontend.stdout"
 
 - name: Attendre que le Frontend soit prêt
-  k8s_info:
-    kind: Pod
-    label_selectors: ["app=frontend"]
-    wait: yes
-    wait_condition:
-      type: Ready
-      status: "True"
-    wait_timeout: 120
+  command: kubectl wait --for=condition=Ready pod -l app=frontend --timeout=120s
+  become_user: "{{ ansible_user | default('root') }}"
+  changed_when: false
 
 # ── URLs d'accès ──────────────────────────────────────────────────────────────
 - name: Récupérer l'IP Minikube
-  command: minikube ip
+  shell: sg docker -c 'minikube ip'
   register: _minikube_ip
   become_user: "{{ ansible_user | default('root') }}"
   changed_when: false

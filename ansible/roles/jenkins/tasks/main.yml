@@ -2,6 +2,21 @@
 # roles/jenkins/tasks/main.yml — Installation de Jenkins
 
 # ── Java ─────────────────────────────────────────────────────────────────────
+- name: Calculer l'espace disque libre sur /
+  set_fact:
+    _root_free_mb: "{{ ((ansible_mounts | selectattr('mount', 'equalto', '/') | map(attribute='size_available') | first | default(0)) / 1024 / 1024) | int }}"
+  when: ansible_os_family == "Debian"
+
+- name: Nettoyer le cache APT si l'espace disque est faible
+  shell: |
+    apt-get clean
+    rm -rf /var/lib/apt/lists/*
+    rm -rf /var/cache/apt/archives/*.deb
+  when:
+    - ansible_os_family == "Debian"
+    - _root_free_mb | int < jenkins_min_free_mb | int
+  changed_when: true
+
 - name: Installer Java {{ java_version }} (Debian/Ubuntu)
   apt:
     name: "openjdk-{{ java_version }}-jdk"
@@ -16,13 +31,26 @@
   when: ansible_os_family == "RedHat"
 
 # ── Dépôt Jenkins (Debian/Ubuntu) ───────────────────────────────────────────
-- name: Ajouter la clé GPG Jenkins
-  apt_key:
+- name: Créer le répertoire des keyrings APT
+  file:
+    path: /etc/apt/keyrings
+    state: directory
+    mode: '0755'
+  when: ansible_os_family == "Debian"
+
+- name: Installer la clé Jenkins dans le keyring APT
+  get_url:
     url: "{{ jenkins_key_url }}"
-    state: present
+    dest: /tmp/jenkins-key.asc
+    mode: '0644'
+    force: true
   when: ansible_os_family == "Debian"
   retries: 3
   delay: 5
+
+- name: Convertir la clé Jenkins en keyring GPG
+  command: gpg --dearmor --yes --output {{ jenkins_keyring_path }} /tmp/jenkins-key.asc
+  when: ansible_os_family == "Debian"
 
 - name: Ajouter le dépôt Jenkins
   apt_repository:

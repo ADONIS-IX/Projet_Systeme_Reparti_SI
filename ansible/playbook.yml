@@ -3,7 +3,7 @@
 # Cible : machine locale sous Linux (WSL2 recommandé sous Windows)
 
 - name: Configuration complète de l'infrastructure DevOps
-  hosts: local
+  hosts: servers
   become: yes
 
   vars:

@@ -17,18 +17,25 @@
         state: present
         update_cache: yes
 
-    - name: Ajouter la clé GPG Docker
-      apt_key:
+    - name: Créer le répertoire des keyrings APT
+      file:
+        path: /etc/apt/keyrings
+        state: directory
+        mode: '0755'
+
+    - name: Installer la clé GPG Docker dans le keyring APT
+      get_url:
         url: "https://download.docker.com/linux/{{ _docker_distro }}/gpg"
-        state: present
+        dest: /etc/apt/keyrings/docker.asc
+        mode: '0644'
       retries: 3
       delay: 5
 
-    - name: Ajouter le dépôt Docker
-      apt_repository:
-        repo: "deb [arch={{ _docker_arch }}] https://download.docker.com/linux/{{ _docker_distro }} {{ ansible_distribution_release }} stable"
-        state: present
-        filename: docker-ce
+    - name: Écrire le dépôt Docker sans doublons
+      copy:
+        dest: /etc/apt/sources.list.d/docker-ce.list
+        content: "deb [arch={{ _docker_arch }} signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/{{ _docker_distro }} {{ ansible_distribution_release }} stable\n"
+        mode: '0644'
 
     - name: Installer Docker CE et le plugin Compose
       apt:
@@ -86,6 +93,14 @@
     name: docker
     state: started
     enabled: yes
+
+- name: Ajouter l'utilisateur Ansible au groupe docker
+  user:
+    name: "{{ ansible_user | default(ansible_user_id) }}"
+    groups: docker
+    append: yes
+  when:
+    - ansible_user | default(ansible_user_id) != 'root'
 
 # ── Vérification ────────────────────────────────────────────────────────────
 - name: Vérifier l'installation de Docker

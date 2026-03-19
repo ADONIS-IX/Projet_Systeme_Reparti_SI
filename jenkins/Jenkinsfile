@@ -39,7 +39,7 @@ pipeline {
                                 flake8 --max-line-length=120 \
                                        --exclude=.venv,migrations \
                                        .
-                                python manage.py test --verbosity=2
+                                USE_SQLITE=True python manage.py test --verbosity=2
                             '''
                         }
                     }

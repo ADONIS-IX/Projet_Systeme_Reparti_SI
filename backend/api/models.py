@@ -1,6 +1,7 @@
 from django.db import models
 from django.contrib.auth.models import User
 
+
 class Product(models.Model):
     """
     Modèle représentant un produit
@@ -11,14 +12,15 @@ class Product(models.Model):
     stock = models.IntegerField(default=0, verbose_name="Stock disponible")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
-    
+
     class Meta:
         ordering = ['-created_at']
         verbose_name = "Produit"
         verbose_name_plural = "Produits"
-    
+
     def __str__(self):
         return self.name
+
 
 class UserProfile(models.Model):
     """
@@ -29,10 +31,10 @@ class UserProfile(models.Model):
     phone = models.CharField(max_length=20, blank=True, verbose_name="Téléphone")
     address = models.TextField(blank=True, verbose_name="Adresse")
     created_at = models.DateTimeField(auto_now_add=True)
-    
+
     class Meta:
         verbose_name = "Profil Utilisateur"
         verbose_name_plural = "Profils Utilisateurs"
-    
+
     def __str__(self):
         return f"Profil de {self.user.username}"

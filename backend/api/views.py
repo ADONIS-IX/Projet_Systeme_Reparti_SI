@@ -2,8 +2,10 @@ from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from django.contrib.auth.models import User
+
 from .models import Product, UserProfile
 from .serializers import UserSerializer, UserProfileSerializer, ProductSerializer
+
 
 class UserViewSet(viewsets.ModelViewSet):
     """
@@ -11,7 +13,7 @@ class UserViewSet(viewsets.ModelViewSet):
     """
     queryset = User.objects.all()
     serializer_class = UserSerializer
-    
+
     @action(detail=True, methods=['get'])
     def profile(self, request, pk=None):
         """
@@ -24,9 +26,10 @@ class UserViewSet(viewsets.ModelViewSet):
             return Response(serializer.data)
         except UserProfile.DoesNotExist:
             return Response(
-                {"error": "Profil non trouvé"}, 
+                {"error": "Profil non trouvé"},
                 status=status.HTTP_404_NOT_FOUND
             )
+
 
 class ProductViewSet(viewsets.ModelViewSet):
     """
@@ -35,7 +38,7 @@ class ProductViewSet(viewsets.ModelViewSet):
     """
     queryset = Product.objects.all()
     serializer_class = ProductSerializer
-    
+
     @action(detail=False, methods=['get'])
     def in_stock(self, request):
         """
@@ -44,7 +47,7 @@ class ProductViewSet(viewsets.ModelViewSet):
         products = Product.objects.filter(stock__gt=0)
         serializer = self.get_serializer(products, many=True)
         return Response(serializer.data)
-    
+
     @action(detail=True, methods=['post'])
     def add_stock(self, request, pk=None):
         """
@@ -52,7 +55,7 @@ class ProductViewSet(viewsets.ModelViewSet):
         """
         product = self.get_object()
         quantity = request.data.get('quantity', 0)
-        
+
         try:
             quantity = int(quantity)
             if quantity <= 0:
@@ -60,18 +63,19 @@ class ProductViewSet(viewsets.ModelViewSet):
                     {"error": "La quantité doit être positive"},
                     status=status.HTTP_400_BAD_REQUEST
                 )
-            
+
             product.stock += quantity
             product.save()
-            
+
             serializer = self.get_serializer(product)
             return Response(serializer.data)
-        
+
         except ValueError:
             return Response(
                 {"error": "Quantité invalide"},
                 status=status.HTTP_400_BAD_REQUEST
             )
+
 
 class UserProfileViewSet(viewsets.ModelViewSet):
     """
